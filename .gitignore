@@ -1,5 +1,5 @@
 # Ignore sensitive files
 .env
-*.db  # SQLite database
-venv/  # Virtual environment
-__pycache__/  # Python cache
+*.db
+venv/
+__pycache__/
