@@ -1,7 +1,7 @@
 # assignments
 Building an comprehensive cricket analytics dashboard that integrates live data from the Cricbuzz API with a SQL database to create an interactive web application
 
-# Thank you GUVI team and our Mentor Subash Govindaraj for this project i have learned alot from this project and referred a lot for this project
+Thank you GUVI team and our Mentor Subash Govindaraj for this project i have learned alot from this project and referred a lot for this project
 
 # Setup
 # Create project directory
