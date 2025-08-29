@@ -705,114 +705,230 @@ def _delete_entity(db_connection, table: str, id_col: str, label_col: str, label
 # BULK OPS
 # =========================================
 def show_bulk_operations(db_connection):
-    st.markdown("## 📊 Bulk Operations")
-    st.markdown("Export or import data in bulk. (Import is CSV-based; extend as needed)")
+    """Display bulk operations"""
+    st.markdown("## Bulk Data Operations")
+    
+    bulk_tab1, bulk_tab2, bulk_tab3 = st.tabs(["Export Data", "Import Data", "Database Stats"])
+    
+    with bulk_tab1:
+        show_export_operations(db_connection)
+    
+    with bulk_tab2:
+        show_import_operations(db_connection)
+    
+    with bulk_tab3:
+        show_database_statistics(db_connection)
 
-    st.subheader("Export Tables")
-    table_flags = {
-        "players": st.checkbox("Players", value=True),
-        "teams": st.checkbox("Teams", value=True),
-        "venues": st.checkbox("Venues", value=True),
-        "matches": st.checkbox("Matches", value=False),
-    }
-    if st.button("📥 Export Selected as CSVs"):
+def show_export_operations(db_connection):
+    """Export data functionality"""
+    st.markdown("### Export Database Tables")
+    
+    export_options = st.multiselect(
+        "Select tables to export:",
+        ["Players", "Teams", "Venues", "Matches"],
+        default=["Players"]
+    )
+    
+    if st.button("Export Selected Tables"):
         try:
-            now = datetime.now().strftime("%Y%m%d_%H%M%S")
-            for t, enabled in table_flags.items():
-                if not enabled:
-                    continue
-                df = db_connection.execute_query(f"SELECT * FROM {t}")
-                if df is None or df.empty:
-                    continue
-                st.download_button(
-                    label=f"Download {t}.csv",
-                    data=df.to_csv(index=False),
-                    file_name=f"{t}_{now}.csv",
-                    mime="text/csv",
-                )
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            for table in export_options:
+                table_name = table.lower()
+                df = db_connection.get_table_data(table_name, limit=1000)
+                
+                if not df.empty:
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label=f"Download {table}.csv",
+                        data=csv,
+                        file_name=f"{table_name}_{timestamp}.csv",
+                        mime="text/csv",
+                        key=f"export_{table}"
+                    )
+                    st.success(f"Prepared {len(df)} records from {table}")
+                else:
+                    st.warning(f"No data found in {table}")
+                    
         except Exception as e:
             st.error(f"Export failed: {e}")
 
-    st.divider()
-    st.subheader("Import CSV (single table)")
-    table_for_import = st.selectbox("Target table", ["players", "teams", "venues"])
-    uploaded = st.file_uploader("Upload CSV", type=["csv"]) 
-    if uploaded is not None:
+def show_import_operations(db_connection):
+    """Import data functionality"""
+    st.markdown("### Import Cricket Data")
+    
+    import_type = st.selectbox("Import data type:", ["Players", "Teams", "Venues"])
+    uploaded_file = st.file_uploader("Choose CSV file:", type="csv")
+    
+    if uploaded_file is not None:
         try:
-            df = pd.read_csv(uploaded)
-            st.write("Preview:")
-            st.dataframe(df.head(20), use_container_width=True)
-            if st.button("⬆️ Import Now"):
-                inserted = 0
-                if table_for_import == "players":
-                    required = {"name", "country", "playing_role"}
-                    if not required.issubset(df.columns):
-                        st.error(f"CSV missing required columns: {required}")
-                        return
-                    for _, r in df.iterrows():
-                        ok = db_connection.execute_update(
-                            """
-                            INSERT INTO players(name, country, playing_role, batting_style, bowling_style,
-                                total_runs, total_wickets, batting_average, bowling_average,
-                                strike_rate, economy_rate, centuries, fifties, matches_played)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                            """,
-                            (
-                                r.get("name"), r.get("country"), r.get("playing_role"),
-                                r.get("batting_style"), r.get("bowling_style"),
-                                int(r.get("total_runs", 0) or 0),
-                                int(r.get("total_wickets", 0) or 0),
-                                float(r.get("batting_average", 0.0) or 0.0),
-                                float(r.get("bowling_average", 0.0) or 0.0),
-                                float(r.get("strike_rate", 0.0) or 0.0),
-                                float(r.get("economy_rate", 0.0) or 0.0),
-                                int(r.get("centuries", 0) or 0),
-                                int(r.get("fifties", 0) or 0),
-                                int(r.get("matches_played", 0) or 0),
-                            ),
-                        )
-                        inserted += 1 if ok else 0
-                elif table_for_import == "teams":
-                    required = {"team_name", "country"}
-                    if not required.issubset(df.columns):
-                        st.error(f"CSV missing required columns: {required}")
-                        return
-                    for _, r in df.iterrows():
-                        mp = int(r.get("matches_played", 0) or 0)
-                        mw = int(r.get("matches_won", 0) or 0)
-                        wl = int(r.get("matches_lost", 0) or 0)
-                        wp = round((mw / max(mp, 1)) * 100, 2) if mp > 0 else 0.0
-                        ok = db_connection.execute_update(
-                            """
-                            INSERT INTO teams(team_name, country, matches_played, matches_won, matches_lost, win_percentage)
-                            VALUES (%s,%s,%s,%s,%s,%s)
-                            """,
-                            (r.get("team_name"), r.get("country"), mp, mw, wl, wp),
-                        )
-                        inserted += 1 if ok else 0
-                else:  # venues
-                    required = {"venue_name", "city", "country"}
-                    if not required.issubset(df.columns):
-                        st.error(f"CSV missing required columns: {required}")
-                        return
-                    for _, r in df.iterrows():
-                        ok = db_connection.execute_update(
-                            """
-                            INSERT INTO venues(venue_name, city, country, capacity, established_year)
-                            VALUES (%s,%s,%s,%s,%s)
-                            """,
-                            (
-                                r.get("venue_name"),
-                                r.get("city"),
-                                r.get("country"),
-                                int(r.get("capacity", 0) or 0),
-                                int(r.get("established_year", 2000) or 2000),
-                            ),
-                        )
-                        inserted += 1 if ok else 0
-                st.success(f"✅ Imported {inserted} records into {table_for_import}")
+            df = pd.read_csv(uploaded_file)
+            st.markdown("**Preview:**")
+            st.dataframe(df.head(), use_container_width=True)
+            
+            # Validate columns
+            required_columns = {
+                "Players": ['name', 'country', 'playing_role'],
+                "Teams": ['team_name', 'country'],
+                "Venues": ['venue_name', 'city', 'country']
+            }
+            
+            missing_columns = [col for col in required_columns[import_type] if col not in df.columns]
+            
+            if missing_columns:
+                st.error(f"Missing required columns: {', '.join(missing_columns)}")
+            else:
+                st.success("File format is valid!")
+                
+                if st.button("Import Data"):
+                    import_count = 0
+                    progress_bar = st.progress(0)
+                    
+                    for idx, row in df.iterrows():
+                        try:
+                            if import_type == "Players":
+                                player_data = {
+                                    'name': row.get('name', ''),
+                                    'country': row.get('country', ''),
+                                    'playing_role': row.get('playing_role', ''),
+                                    'batting_style': row.get('batting_style', ''),
+                                    'bowling_style': row.get('bowling_style', ''),
+                                    'total_runs': int(row.get('total_runs', 0)) if pd.notna(row.get('total_runs', 0)) else 0,
+                                    'total_wickets': int(row.get('total_wickets', 0)) if pd.notna(row.get('total_wickets', 0)) else 0,
+                                    'batting_average': float(row.get('batting_average', 0)) if pd.notna(row.get('batting_average', 0)) else 0.0,
+                                    'bowling_average': float(row.get('bowling_average', 0)) if pd.notna(row.get('bowling_average', 0)) else 0.0,
+                                    'strike_rate': float(row.get('strike_rate', 0)) if pd.notna(row.get('strike_rate', 0)) else 0.0,
+                                    'economy_rate': float(row.get('economy_rate', 0)) if pd.notna(row.get('economy_rate', 0)) else 0.0,
+                                    'centuries': int(row.get('centuries', 0)) if pd.notna(row.get('centuries', 0)) else 0,
+                                    'fifties': int(row.get('fifties', 0)) if pd.notna(row.get('fifties', 0)) else 0,
+                                    'matches_played': int(row.get('matches_played', 0)) if pd.notna(row.get('matches_played', 0)) else 0
+                                }
+                                
+                                success = db_connection.add_player(player_data)
+                                if success:
+                                    import_count += 1
+                                    
+                        except Exception as e:
+                            st.warning(f"Error importing row {idx + 1}: {e}")
+                        
+                        progress = (idx + 1) / len(df)
+                        progress_bar.progress(progress)
+                    
+                    st.success(f"Import completed! Successfully imported: {import_count}/{len(df)} records")
+                    
         except Exception as e:
-            st.error(f"Import failed: {e}")
+            st.error(f"Error reading file: {e}")
+
+def show_database_statistics(db_connection):
+    """Show database statistics and analytics"""
+    st.markdown("### Database Statistics & Analytics")
+    
+    try:
+        # Table counts
+        col1, col2, col3, col4 = st.columns(4)
+        
+        tables = ['players', 'teams', 'venues', 'matches']
+        counts = {}
+        
+        for table in tables:
+            count_df = db_connection.execute_query(f"SELECT COUNT(*) as count FROM {table}")
+            count = count_df.iloc[0]['count'] if not count_df.empty else 0
+            counts[table] = count
+        
+        with col1:
+            st.metric("Players", counts['players'])
+        with col2:
+            st.metric("Teams", counts['teams'])
+        with col3:
+            st.metric("Venues", counts['venues'])
+        with col4:
+            st.metric("Matches", counts['matches'])
+        
+        # Quick analytics
+        st.markdown("### Quick Analytics")
+        
+        analytics_col1, analytics_col2 = st.columns(2)
+        
+        with analytics_col1:
+            # Top countries by player count
+            country_stats = db_connection.execute_query("""
+                SELECT country, COUNT(*) as player_count 
+                FROM players 
+                GROUP BY country 
+                ORDER BY COUNT(*) DESC 
+                LIMIT 5
+            """)
+            
+            if not country_stats.empty:
+                st.markdown("**Top Countries by Players:**")
+                fig = px.bar(country_stats, x='country', y='player_count', 
+                           title="Players by Country")
+                st.plotly_chart(fig, use_container_width=True)
+        
+        with analytics_col2:
+            # Role distribution
+            role_stats = db_connection.execute_query("""
+                SELECT playing_role, COUNT(*) as count 
+                FROM players 
+                GROUP BY playing_role 
+                ORDER BY COUNT(*) DESC
+            """)
+            
+            if not role_stats.empty:
+                st.markdown("**Player Role Distribution:**")
+                fig = px.pie(role_stats, values='count', names='playing_role',
+                           title="Distribution by Role")
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # Performance insights
+        st.markdown("### Performance Insights")
+        
+        perf_col1, perf_col2 = st.columns(2)
+        
+        with perf_col1:
+            # Top performers
+            top_batsmen = db_connection.execute_query("""
+                SELECT name, country, total_runs, batting_average 
+                FROM players 
+                WHERE total_runs > 0 
+                ORDER BY batting_average DESC 
+                LIMIT 10
+            """)
+            
+            if not top_batsmen.empty:
+                st.markdown("**Top Batsmen by Average:**")
+                st.dataframe(top_batsmen, use_container_width=True)
+        
+        with perf_col2:
+            # Top bowlers
+            top_bowlers = db_connection.execute_query("""
+                SELECT name, country, total_wickets, bowling_average 
+                FROM players 
+                WHERE total_wickets > 0 
+                ORDER BY total_wickets DESC 
+                LIMIT 10
+            """)
+            
+            if not top_bowlers.empty:
+                st.markdown("**Top Bowlers by Wickets:**")
+                st.dataframe(top_bowlers, use_container_width=True)
+        
+        # Database health
+        st.markdown("### Database Health")
+        
+        health_metrics = []
+        for table in tables:
+            health_metrics.append({
+                'Table': table.title(),
+                'Records': counts[table],
+                'Status': 'Healthy' if counts[table] > 0 else 'Empty'
+            })
+        
+        health_df = pd.DataFrame(health_metrics)
+        st.dataframe(health_df, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"Error generating statistics: {e}")
 
 # =========================================
 # DB TOOLS / UTILITIES
@@ -851,9 +967,7 @@ def show_database_tools(db_connection):
         except Exception as e:
             st.error(f"Check failed: {e}")
 
-# =========================================
-# HELPERS
-# =========================================
+
 def show_data_statistics(df: pd.DataFrame):
     st.markdown("#### Data Statistics")
     c1, c2, c3 = st.columns(3)
